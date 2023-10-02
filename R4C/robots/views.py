@@ -1,9 +1,15 @@
+import json
+from datetime import datetime
+
+import pytz
 import xlwt
 from django.db.models import Count
 from django.http import HttpResponse
 from django.http import JsonResponse
 from django.utils import timezone
+from django.views.decorators.csrf import csrf_exempt
 
+from orders.models import Order
 from .models import Robot
 
 
@@ -70,19 +76,56 @@ def export_to_excel(request):
 
 
 # Функция для получения списка роботов и отправки в формате JSON
-def robot_list(request):
-    # Получаем все объекты модели Robot из базы данных
-    robots = Robot.objects.all()
+@csrf_exempt
+def create_robot(request):
+    if request.method == 'POST':
+        try:
+            data = json.loads(request.body)
 
-    # Создаем список словарей с информацией о роботах
-    data = [
-        {
-            'model': robot.model,
-            'version': robot.version,
-            'created': robot.created.strftime('%Y-%m-%d %H:%M:%S'),
-        }
-        for robot in robots
-    ]
+            # Проверка наличия всех обязательных полей
+            required_fields = ['serial', 'model', 'version', 'created']
+            for field in required_fields:
+                if field not in data:
+                    return JsonResponse({'error': f'Поле {field} отсутствует в запросе'}, status=400)
 
-    # Возвращаем данные в виде JSON-ответа
-    return JsonResponse({'robots': data})
+            # Проверка правильности формата времени и будущей даты
+            try:
+                # Используем UTC временную зону
+                created_datetime = datetime.strptime(data['created'], '%Y-%m-%dT%H:%M:%S').replace(tzinfo=pytz.UTC)
+                current_datetime = datetime.now(pytz.UTC)
+                if created_datetime > current_datetime:
+                    return JsonResponse({'error': 'Дата создания не может быть в будущем'}, status=400)
+            except ValueError:
+                return JsonResponse({'error': 'Неверный формат времени (ожидается: YYYY-MM-DDTHH:MM:SS)'}, status=400)
+
+            # Проверка длины полей 'version', 'model' и 'serial'
+            if len(data['version']) > 2 or len(data['model']) > 2 or len(data['serial']) > 5:
+                return JsonResponse(
+                    {'error': 'Поля version, model и serial могут содержать максимум 2 и 5 символов соответственно'},
+                    status=400)
+
+            # Создаем запись о роботе в базе данных
+            robot = Robot(
+                serial=data['serial'],
+                model=data['model'],
+                version=data['version'],
+                created=created_datetime,
+                quantity=data.get('quantity', None),
+                is_available=data.get('is_available', True)
+            )
+            robot.save()
+
+            # Если в запросе есть информация о заказах, добавляем их к роботу
+            if 'orders' in data:
+                for order_id in data['orders']:
+                    try:
+                        order = Order.objects.get(id=order_id)
+                        robot.orders.add(order)
+                    except Order.DoesNotExist:
+                        return JsonResponse({'error': f'Заказ с ID {order_id} не существует'}, status=400)
+
+            return JsonResponse({'message': 'Робот успешно создан'}, status=201)
+        except json.JSONDecodeError:
+            return JsonResponse({'error': 'Неверный формат JSON'}, status=400)
+    else:
+        return JsonResponse({'error': 'Метод не поддерживается'}, status=405)

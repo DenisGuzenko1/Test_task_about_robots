@@ -15,12 +15,14 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path, include
-from robots.views import export_to_excel
+
 from robots import views
+from robots.views import export_to_excel
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('', include('orders.urls'), name='index'),  # главная страница, для заказа роботов
-    path('api/robots/', views.robot_list, name='robot-list'),  # API с информацией по роботам
+    path('create-robot/', views.create_robot, name='create_robot'),
+    # маршрут, для создания роботов с помощью POST запроса
     path('export-to-excel/', export_to_excel, name='export-to-excel'),  # ссылка для создания Excel-файла
 ]
